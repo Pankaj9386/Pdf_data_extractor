@@ -133,26 +133,42 @@ def analyze(data):
         piechart(data,selected_option1,selected_option2)
 
 def extract_text_by_replacing_images(file):
-    images=[]
-    with pp.open(file)as pdf:
-        extracted_text=""
-        for page_num,page in enumerate(pdf.pages):
-            text=page.extract_text()
-            
-                # extracted_text+=text
-                
-            images=page.images
-                
-                
-            
-            img_obj=page.to_image()
-            for img_index, img in enumerate(page.images):
-                # x0,top,x1,bottom=img['x0'],img['top'],img['x1'],img['bottom']
-                    
-                text += f"image_{page_num+1}_{img_index+1}.jpg"
-            extracted_text+=text 
-            extracted_text+=f"  \npage number-{page_num+1}  \n"   
-            
+    extracted_text = ""
+    
+    with pp.open(file) as pdf:
+        for page_num, page in enumerate(pdf.pages):
+            page_text = ""
+            image_positions = []
+            word_position=page.extract_words()
+            # st.write(f"  \n{word_position}  \n  page-number{page_num}  \n")
+            # Extract images and their positions
+            images = page.images
+            img_obj = page.to_image()
+            for img_index, img in enumerate(images):
+                x0, top, x1, bottom = img['x0'], img['top'], img['x1'], img['bottom']
+                cropped_image = img_obj.original.crop((x0, top, x1, bottom))
+                image_filename = f"image_{page_num+1}_{img_index+1}.jpg"
+                image_positions.append((x0,top,x1,bottom))
+
+                for i in range(len(word_position)):
+                    for j in range(len(image_positions)):
+                        if word_position[i]["top"]>image_positions[j][1] and word_position[i]["bottom"]>image_positions[j][3]:
+                            image={
+                                "text":f" image_{page_num+1}_{img_index+1}.jpg ",
+                                "top":image_positions[j][1],
+                                "bottom":image_positions[j][3]
+                            }
+                            word_position.insert(i,image)
+                            # image_positions.remove()
+                            del image_positions[j]
+                            break
+            # Extract text and keep track of its position
+            # page_text=page.extract_text()
+            for k in range(len(word_position)):
+                extracted_text+=word_position[k]["text"] +" "
+            extracted_text+=f"  \n===============  page number-{page_num+1} ================  \n"           
+            # extracted_text += page_text + f"\nPage number-{page_num+1}\n"
+
     return extracted_text
 
 
