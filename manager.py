@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pdfplumber as pp
 import re
+import mysql.connector
 import io
 import google.generativeai as genai
 from PIL import Image
@@ -33,9 +34,6 @@ def get_answer_from_gemini(data):
     response = chat_session.send_message(data)
 
     return response
-
-
-
 
 def scatterplot(data,selected_option1,selected_option2):
     fig, ax = plt.subplots()
@@ -170,9 +168,7 @@ def extract_text_by_replacing_images(file):
             # extracted_text += page_text + f"\nPage number-{page_num+1}\n"
 
     return extracted_text
-
-
-    
+ 
 def extract_tables(uploaded_file):
     with pp.open(uploaded_file)as f:
         # for page in f.pages:
@@ -257,7 +253,6 @@ def extract_textpdf(uploaded_file):
         
     return text1
 
- 
 def get_answer(data):
     API_KEY = "AIzaSyCgVzE1OsxtrMr61B8CBdAdcHmTBDShOHg"
     genai.configure(api_key=API_KEY)
@@ -279,21 +274,79 @@ def get_answer(data):
 
     return response
 
-
-
-
-
-
-
+def extract_only_images(uploaded_file):
+    pdf_file_path = f"{uploaded_file.name}"
+    mycursor = conn.cursor()
+    query="select id from text_with_image_labels where file_name=%s"
+    value=(pdf_file_path,)
+    mycursor.execute(query,value)
+    ids=mycursor.fetchall()
+    if len(ids)>0:
+        id=ids[0][0]
+    else:
+        query="insert into text_with_image_labels(file_name) values (%s)"
+        value=(pdf_file_path,)
+        mycursor.execute(query,value)
+        query="select id from text_with_image_labels where file_name=%s;"
+        value=(pdf_file_path,)
+        mycursor.execute(query,value)
+        ids=mycursor.fetchall()
+        id=ids[0][0]
+            
+    query = "select pdf_images_table from text_with_image_labels where pdf_images_table=%s;"
+    table_name=f"table{id}"
+    value=(table_name,)
+    mycursor.execute(query,value)
+    answer=mycursor.fetchall()
+    print(f"table {table_name} of file-{pdf_file_path} occurs this times",len(answer))
+            
+    if len(answer)>0:
+        query=f"select image,image_label from `{table_name}`;"
+        mycursor.execute(query)
+        list=mycursor.fetchall()
+        for image_data, image_label in list:
+                
+            image = Image.open(io.BytesIO(image_data))
+            st.image(image, caption=image_label)
+    else:
+        pdf_file_path = f"{uploaded_file.name}"
+        query=f"UPDATE text_With_image_labels SET pdf_images_table = %s WHERE file_name = %s"
+        value=(table_name,pdf_file_path)
+        mycursor.execute(query,value)
+        query=f"create table `{table_name}` (id INT AUTO_INCREMENT,image blob,image_label varchar (30), primary key (id))"
+        value=(table_name,)
+        mycursor.execute(query)
+        images=extract_images(uploaded_file)
+        
+        if images:
+                    st.write("Extracted Images:")
+                    for image_filename, image_bytes in images:
+                        image = Image.open(io.BytesIO(image_bytes))
+                        image_data = io.BytesIO(image_bytes).read()
+                        query=f"insert into `{table_name}` (image,image_label) values(%s,%s)"
+                        value=(image_data,image_filename)
+                        try:
+                            mycursor.execute(query,value)
+                            conn.commit()
+                        except mysql.connector.Error as err:
+                            st.error(f"Error: {err}")
+                            conn.rollback()
+                            
+                        
+                        st.image(image, caption=image_filename)
+                        st.download_button(
+                        label="Download Image",
+                        data=image_bytes,
+                        file_name=image_filename,
+                        mime="image/jpeg"
+                        )
+        else:
+                        st.write("No images found in the PDF file.")
 
 st.title("file analyzer")
 
 uploaded_file = st.file_uploader("Choose a file", type=["csv", "pdf"], accept_multiple_files=False)
 
-# data=pd.read_csv(uploaded_file)
-
-# st.print(data)
-#gemini_api_key ="AIzaSyBGqyXPQjQjPJsAKPLgJGqr-8l9LoiPAqE"
 if uploaded_file is not None:
     all_tables = []
     if uploaded_file.name.endswith('.csv'):
@@ -303,8 +356,10 @@ if uploaded_file is not None:
         analyze(data)
     
     elif uploaded_file.name.endswith('.pdf'):
-        
-        column1,column2,column3,column4=st.columns(4)
+        conn=mysql.connector.connect(host="localhost",password="12345678",user="root",database="files")
+        if conn.is_connected():
+            st.info("database connected")
+        column1,column2,column3,column4,column5=st.columns(5)
         with column1:
             ex_image=st.button("Images")
         with column2:
@@ -313,35 +368,132 @@ if uploaded_file is not None:
             ex_question=st.button("Ask Question")
         with column4:
             image_labels=st.button("Text with image labels")
+        with column5:
+            image_pdf=st.button("Get the separate pdf of images")
+        
+        if image_pdf:
+            pdf_file_path = f"{uploaded_file.name}"
+            mycursor = conn.cursor()
+            query="select id from text_with_image_labels where file_name=%s"
+            value=(pdf_file_path,)
+            mycursor.execute(query,value)
+            ids=mycursor.fetchall()
+            if len(ids)>0:
+                id=ids[0][0]
+                query="insert into text_with_image_labels(file_name) values (%s)"
+                value=(pdf_file_path,)
+                mycursor.execute(query,value)
+                query="select id from text_with_image_labels where file_name=%s;"
+                value=(pdf_file_path,)
+                mycursor.execute(query,value)
+                ids=mycursor.fetchall()
+                id=ids[0][0]
             
-        if image_labels:
-            text=extract_text_by_replacing_images(uploaded_file)
-            st.write(text)
+            query = "select pdf_images_table from text_with_image_labels where pdf_images_table=%s;"
+            table_name=f"table{id}"
+            value=(table_name,)
+            mycursor.execute(query,value)
+            answer=mycursor.fetchall()
+            print(f"table {table_name} of file-{pdf_file_path} occurs this times",len(answer))
+            
+            if len(answer)>0:
+                query=f"select image,image_label from `{table_name}`;"
+                mycursor.execute(query)
+                list=mycursor.fetchall()
+                images=[]
+                for image_data, image_label in list:
+                
+                    image = Image.open(io.BytesIO(image_data))
+                    pdf_image=image.convert('RGB')
+                    images.append(pdf_image)
+                    pdf_bytes = io.BytesIO()
+                    
+                    images[0].save(pdf_bytes, format='PDF', save_all=True, append_images=images[1:])
+                    # pdf_bytes.seek(0)
+                    
+            
+                    # st.image(image, caption=image_label)
+                
+                st.download_button(label="Download PDF", data=pdf_bytes, file_name=pdf_file_path, mime="application/pdf")
+            else:
+                pdf_file_path = f"{uploaded_file.name}"
+                query=f"UPDATE text_With_image_labels SET pdf_images_table = %s WHERE file_name = %s"
+                value=(table_name,pdf_file_path)
+                mycursor.execute(query,value)
+                query=f"create table `{table_name}` (id INT AUTO_INCREMENT,image blob,image_label varchar (30), primary key (id))"
+                value=(table_name,)
+                mycursor.execute(query)
+                images=extract_images(uploaded_file)
+        
+                if images:
+                            st.write("Extracted Images:")
+                            images=[]
+                            for image_filename, image_bytes in images:
+                                image = Image.open(io.BytesIO(image_bytes))
+                                pdf_image=image.convert("RGB")
+                                images.append(pdf_image)
+                                image_data = io.BytesIO(image_bytes).read()
+                                query=f"insert into `{table_name}` (image,image_label) values(%s,%s)"
+                                value=(image_data,image_filename)
+                                try:
+                                    mycursor.execute(query,value)
+                                    conn.commit()
+                                except mysql.connector.Error as err:
+                                    st.error(f"Error: {err}")
+                                    conn.rollback()
+                            
+                                pdf_bytes = io.BytesIO()
+                    
+                                images[0].save(pdf_bytes, format='PDF', save_all=True, append_images=images[1:])
+                                # st.image(image, caption=image_filename)
+                                # st.download_button(
+                                # label="Download Image",
+                                # data=image_bytes,
+                                # file_name=image_filename,
+                                # mime="image/jpeg"
+                                # )
+                            st.download_button(label="Download PDF", data=pdf_bytes, file_name=pdf_file_path, mime="application/pdf")      
+                else:
+                                st.write("No images found in the PDF file.")
+        
+                if image_labels:
+                    mycursor = conn.cursor()
+            
+                    query = """
+                            select file_name from text_with_image_labels where file_name=(%s);
+                        """
+                    pdf_file_path = f"{uploaded_file.name}"
+                    st.info(pdf_file_path)
+                    mycursor.execute(query, (pdf_file_path,))
+                    answer=mycursor.fetchall()
+                    print(len(answer))
+                    if len(answer)>0:
+                        query="select file_text from text_with_image_labels where file_name=(%s)"
+                        value=(pdf_file_path,)
+                        mycursor.execute(query,value)
+                        file_text=mycursor.fetchone()
+                        st.write(file_text[0])
+                   
+                    else:
+                
+                        text=extract_text_by_replacing_images(uploaded_file)
+                        mycursor.execute("select count(distinct(id)) from text_with_image_labels")
+                        count=mycursor.fetchone()
+                        id=count[0]+1
+                        query="insert into text_with_image_labels(id,file_name,file_text) values (%s,%s,%s)"
+                        values=(id,pdf_file_path,text)
+                        mycursor.execute(query,values)
+                        conn.commit()
+                
+                        st.write(text)
+            
             
         if ex_question:
             chat=st.chat_input("Type your message here...")
             text=extract_textpdf(uploaded_file)
-            
-            
         
         if ex_image:
-            text=extract_textpdf(uploaded_file)
-            images=extract_images(uploaded_file)
-            
-            if images:
-                st.write("Extracted Images:")
-                for image_filename, image_bytes in images:
-                    image = Image.open(io.BytesIO(image_bytes))
-                    st.image(image, caption=image_filename)
-                    st.download_button(
-                        label="Download Image",
-                        data=image_bytes,
-                        file_name=image_filename,
-                        mime="image/jpeg"
-                    )
-            else:
-                st.write("No images found in the PDF file.")
-        
+            extract_only_images(uploaded_file)
         
         if ex_tables:
             #   text=extract_textpdf(uploaded_file)
